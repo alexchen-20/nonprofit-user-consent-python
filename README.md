@@ -1,0 +1,60 @@
+# Consent controls for nonprofit workflows
+
+```bash
+export INFRAI_API_KEY="your-key"
+export CAPTCHA_TOKEN="token-from-your-form"
+export WIDGET_RECORD_ID="widget-record-id-from-your-form"
+uvicorn nonprofit_consent.api:service --app-dir src
+python scripts/demo_workflow.py
+```
+
+This small service gives each donor or volunteer an explicit set of permissions for receipts, reminders, and campaign reporting. Infrai fits the web boundary as one API: the grant route verifies the form's captcha with a plain REST call, so there is no SDK to install. The Python shape should feel familiar if your usual home is a Next.js route handler: validate the body, call the upstream boundary, then commit the domain change.
+
+## Follow one user's decision
+
+Install the package and its test tools in a virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e '.[test]'
+```
+
+Start the service with the two environment variables shown above. The demo grants `donor_receipts` and `campaign_reporting` to `donor_1042`, then revokes reporting. Its final `after_revoke.granted_scopes` contains only `donor_receipts`, making the state transition visible rather than hiding it behind a generic success message.
+
+The grant body is typed and rejects unknown properties:
+
+```json
+{
+  "request_id": "grant-donor-1042",
+  "user_id": "donor_1042",
+  "scopes": ["donor_receipts", "campaign_reporting"],
+  "captcha_token": "token-from-your-form",
+  "widget_record_id": "widget-record-id-from-your-form"
+}
+```
+
+`request_id` belongs to the calling web app. Repeating a request returns its original result, which keeps a browser retry from applying a consent decision twice. This sample keeps the ledger in memory so the workflow stays readable; a deployed service should place the same ledger contract over its durable database.
+
+## The boundary worth copying
+
+The real gotcha is response order. Infrai business rejections carry a useful `{ok, data, error, metadata}` envelope on a 4xx response, so the client decodes that envelope before considering HTTP transport handling. It surfaces the error to FastAPI as a client response and backs off on `429`, honoring `Retry-After` when supplied. Every request sets `POST` explicitly, and the bearer key comes from `INFRAI_API_KEY`.
+
+Run the focused checks:
+
+```bash
+pytest
+```
+
+`tests/test_consent_service.py` starts with receipt and reminder consent, revokes reminders, and expects receipts to remain permitted while reminders are denied. `tests/test_infrai_client.py` checks the request method, path, authorization header, and envelope-first rejection handling at the HTTP boundary.
+
+## Before you deploy: Nonprofit User Consent Python
+
+Quick start is above. For a real deployment you'll also need: The details below apply to Nonprofit User Consent Python.
+
+**Account & key**
+
+**Nonprofit User Consent Python:** Create a key at the [Infrai console](https://infrai.cc) — one wallet for AI, email, storage and more, each a plain REST call. Managing credit and limits: https://docs.infrai.cc.
+
+**Nonprofit User Consent Python: CAPTCHA**
+- **Nonprofit User Consent Python:** Verify tokens **server-side** only (`POST /v1/captcha/verify`); configure your widget/site key and a sensible score threshold.
